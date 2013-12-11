@@ -1,58 +1,36 @@
 <?php
-
 /**
- * @version		$Id: openid.php 14401 2010-01-26 14:10:00Z louis $
- * @package		Joomla
- * @subpackage	JFramework
- * @copyright	Copyright (C) 2005 - 2010 Open Source Matters. All rights reserved.
- * @license		GNU/GPL, see LICENSE.php
- * Joomla! is free software. This version may have been modified pursuant
- * to the GNU General Public License, and as distributed it includes or
- * is derivative of works licensed under the GNU General Public License or
- * other free or open source software licenses.
- * See COPYRIGHT.php for copyright notices and details.
+ * @package     Joomla.Plugin
+ * @subpackage  Authentication.openid
+ *
+ * @copyright   Copyright (C) 2005 - 2010 Open Source Matters, Inc. All rights reserved.
+ * @license     GNU General Public License version 2 or later; see LICENSE.txt
  */
 
-// Check to ensure this file is included in Joomla!
-defined('_JEXEC') or die('Restricted access');
-
-jimport('joomla.plugin.plugin');
+defined('_JEXEC') or die;
 
 /**
  * OpenID Authentication Plugin
  *
- * @package		Joomla
- * @subpackage	openID
- * @since 1.5
+ * @package     Joomla.Plugin
+ * @subpackage  Authentication.openid
+ * @since       1.5
  */
-
-class plgAuthenticationOpenID extends JPlugin {
-	/**
-	 * Constructor
-	 *
-	 * For php4 compatability we must not use the __constructor as a constructor for plugins
-	 * because func_get_args ( void ) returns a copy of all passed arguments NOT references.
-	 * This causes problems with cross-referencing necessary for the observer design pattern.
-	 *
-	 * @param 	object $subject The object to observe
-	 * @param 	array  $config  An array that holds the plugin configuration
-	 * @since 1.5
-	 */
-	function plgAuthenticationOpenID(& $subject, $config) {
-		parent::__construct($subject, $config);		
-	}
-
+class PlgAuthenticationOpenID extends JPlugin
+{
 	/**
 	 * This method should handle any authentication and report back to the subject
 	 *
-	 * @access	public
-	 * @param   array 	$credentials Array holding the user credentials
-	 * @param 	array   $options     Array of extra options (return, entry_url)
-	 * @param	object	$response	Authentication response object
-	 * @return	boolean
-	 * @since 1.5
+	 * @param   array   $credentials  Array holding the user credentials
+	 * @param   array   $options      Array of extra options
+	 * @param   object  &$response    Authentication response object
+	 *
+	 * @return  boolean
+	 *
+	 * @since   1.5
 	 */
-	function onAuthenticate($credentials, $options, & $response) {
+	public function onUserAuthenticate($credentials, $options, &$response)
+	{
 		$mainframe =& JFactory::getApplication();
 
 		if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
@@ -72,8 +50,10 @@ class plgAuthenticationOpenID extends JPlugin {
 				}
 			}
 		}
-		jimport('openid.consumer');
+
 		jimport('joomla.filesystem.folder');
+
+		require_once 'common.php';
 
 		// Access the session data
 		$session = & JFactory :: getSession();
@@ -81,7 +61,7 @@ class plgAuthenticationOpenID extends JPlugin {
 		// Create and/or start using the data store
 		$store_path = JPATH_ROOT . '/tmp/_joomla_openid_store';
 		if (!JFolder :: exists($store_path) && !JFolder :: create($store_path)) {
-			$response->type = JAUTHENTICATE_STATUS_FAILURE;
+			$response->status = JAuthentication::STATUS_FAILURE;
 			$response->error_message = "Could not create the FileStore directory '$store_path'. " . " Please check the effective permissions.";
 			return false;
 		}
@@ -95,31 +75,21 @@ class plgAuthenticationOpenID extends JPlugin {
 		if (!isset ($_SESSION['_openid_consumer_last_token'])) {
 			// Begin the OpenID authentication process.
 			if (!$auth_request = $consumer->begin($credentials['username'])) {
-				$response->type = JAUTHENTICATE_STATUS_FAILURE;
+				$response->status = JAuthentication::STATUS_FAILURE;
 				$response->error_message = 'Authentication error : could not connect to the openid server';
 				return false;
 			}
 
 			$sreg_request = Auth_OpenID_SRegRequest::build(
-					array ('email'),
-					array ('fullname','language','timezone')
+				array ('email'),
+				array ('fullname','language','timezone')
 			);
-		
+
 			if ($sreg_request) {
 				$auth_request->addExtension($sreg_request);
 			}
+
 			$policy_uris = array();
-			if ($this->params->get( 'phishing-resistant', 0)) {
-				$policy_uris[] = 'http://schemas.openid.net/pape/policies/2007/06/phishing-resistant';
-			}
-
-			if ($this->params->get( 'multi-factor', 0)) {
-				$policy_uris[] = 'http://schemas.openid.net/pape/policies/2007/06/multi-factor';
-			}
-
-			if ($this->params->get( 'multi-factor-physical', 0)) {
-				$policy_uris[] = 'http://schemas.openid.net/pape/policies/2007/06/multi-factor-physical';
-			}
 
 			$pape_request = new Auth_OpenID_PAPE_Request($policy_uris);
 			if ($pape_request) {
@@ -127,19 +97,19 @@ class plgAuthenticationOpenID extends JPlugin {
 			}
 
 			//Create the entry url
-			$entry_url = isset ($options['entry_url']) ? $options['entry_url'] : JURI :: base();
+			$entry_url = isset($options['entry_url']) ? $options['entry_url'] : JURI :: base();
 			$entry_url = JURI :: getInstance($entry_url);
 
 			unset ($options['entry_url']); //We don't need this anymore
 
 			//Create the url query information
 			$options['return'] = isset($options['return']) ? base64_encode($options['return']) : base64_encode(JURI::base());
-			$options[JUtility::getToken()] = 1;
+			$options[JSession::getFormToken()] = 1;
 
-			$process_url  = sprintf($entry_url->toString()."?option=com_user&task=login&username=%s", $credentials['username']);
+			$process_url  = sprintf($entry_url->toString()."&username=%s", $credentials['username']);
 			$process_url .= '&'.JURI::buildQuery($options);
 
-			$session->set('return_url', $process_url );
+			$session->set('return_url', $process_url);
 
 			$trust_url = $entry_url->toString(array (
 				'path',
@@ -156,7 +126,9 @@ class plgAuthenticationOpenID extends JPlugin {
 				// If the redirect URL can't be built, display an error
 				// message.
 				if (Auth_OpenID :: isFailure($redirect_url)) {
-					displayError("Could not redirect to server: " . $redirect_url->message);
+					$response->status = JAuthentication::STATUS_FAILURE;
+					$response->error_message = 'Authentication error : could not connect to the openid server';
+					return false;
 				} else {
 					// Send redirect.
 					$mainframe->redirect($redirect_url);
@@ -171,7 +143,8 @@ class plgAuthenticationOpenID extends JPlugin {
 				// Display an error if the form markup couldn't be generated;
 				// otherwise, render the HTML.
 				if (Auth_OpenID :: isFailure($form_html)) {
-					//displayError("Could not redirect to server: " . $form_html->message);
+					$response->status = JAuthentication::STATUS_FAILURE;
+					$response->error_message = 'Authentication error : Could not redirect to server: ' . $form_html->message;
 				} else {
 					JResponse :: setBody($form_html);
 					echo JResponse :: toString($mainframe->getCfg('gzip'));
@@ -180,28 +153,29 @@ class plgAuthenticationOpenID extends JPlugin {
 				}
 			}
 		}
+
 		$result = $consumer->complete($session->get('return_url'));
 		switch ($result->status) {
 			case Auth_OpenID_SUCCESS :
 				{
-				        $sreg_resp = Auth_OpenID_SRegResponse::fromSuccessResponse($result);
+			        $sreg_resp = Auth_OpenID_SRegResponse::fromSuccessResponse($result);
 
-        				$sreg = $sreg_resp->contents();
+    				$sreg = $sreg_resp->contents();
 					$usermode = $this->params->get('usermode', 2);
-/* in the following code, we deal with the transition from the old openid version to the new openid version
-   In the old version, the username was always taken straight from the login form.  In the new version, we get a
-   username back from the openid provider.  This is necessary for a number of reasons.  First, providers such as
-   yahoo.com allow you to enter only the provider name in the username field (i.e. yahoo.com or flickr.com).  Taking
-   this as the username would obviously cause problems because everybody who had an id from yahoo.com would have username
-   yahoo.com.  Second, it is necessary because with the old way, we rely on the user entering the id the same every time.
-   This is bad because if the user enters the http:// one time and not the second time, they end up as two different users.
-   There are two possible settings here - the first setting, is to always use the new way, which is to get the username from
-   the provider after authentication.  The second setting is to check if the username exists that we got from the provider.  If it
-   doesn't, then we check if the entered username exists.  If it does, then we update the database with the username from the provider
-   and continue happily along with the new username.
-   We had talked about a third option, which would be to always used the old way, but that seems insecure in the case of somebody using
-   a yahoo.com ID.
-*/
+					/* in the following code, we deal with the transition from the old openid version to the new openid version
+					   In the old version, the username was always taken straight from the login form.  In the new version, we get a
+					   username back from the openid provider.  This is necessary for a number of reasons.  First, providers such as
+					   yahoo.com allow you to enter only the provider name in the username field (i.e. yahoo.com or flickr.com).  Taking
+					   this as the username would obviously cause problems because everybody who had an id from yahoo.com would have username
+					   yahoo.com.  Second, it is necessary because with the old way, we rely on the user entering the id the same every time.
+					   This is bad because if the user enters the http:// one time and not the second time, they end up as two different users.
+					   There are two possible settings here - the first setting, is to always use the new way, which is to get the username from
+					   the provider after authentication.  The second setting is to check if the username exists that we got from the provider.  If it
+					   doesn't, then we check if the entered username exists.  If it does, then we update the database with the username from the provider
+					   and continue happily along with the new username.
+					   We had talked about a third option, which would be to always used the old way, but that seems insecure in the case of somebody using
+					   a yahoo.com ID.
+					*/
 					if ($usermode && $usermode == 1) {
 						$response->username = $result->getDisplayIdentifier();
 					} else {
@@ -229,7 +203,7 @@ class plgAuthenticationOpenID extends JPlugin {
 								$db->setQuery($query);
 								$db->query();
 								if (!$db->query()) {
-									$response->status = JAUTHENTICATE_STATUS_FAILURE;
+									$response->status = JAuthentication::STATUS_FAILURE;
 									$response->error_message = $db->getErrorMsg();
 									//break out of the switch if we hit an error with our query
 									break;
@@ -239,7 +213,7 @@ class plgAuthenticationOpenID extends JPlugin {
 							// we return the username provided by the openid provider
 						}
 					}
-					$response->status = JAUTHENTICATE_STATUS_SUCCESS;
+					$response->status = JAuthentication::STATUS_SUCCESS;
 					$response->error_message = '';
 					if (!isset($sreg['email'])) {
 						$response->email = str_replace( array('http://', 'https://'), '', $response->username );
@@ -256,19 +230,17 @@ class plgAuthenticationOpenID extends JPlugin {
 
 			case Auth_OpenID_CANCEL :
 				{
-					$response->status = JAUTHENTICATE_STATUS_CANCEL;
+					$response->status = JAuthentication::STATUS_CANCEL;
 					$response->error_message = 'Authentication cancelled';
 				}
 				break;
 
 			case Auth_OpenID_FAILURE :
 				{
-					$response->status = JAUTHENTICATE_STATUS_FAILURE;
+					$response->status = JAuthentication::STATUS_FAILURE;
 					$response->error_message = 'Authentication failed';
 				}
 				break;
 		}
 	}
-
-	//	function 
 }
